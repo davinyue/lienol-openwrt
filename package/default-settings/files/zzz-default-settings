@@ -1,10 +1,15 @@
 #!/bin/sh
 
 touch /etc/crontabs/root
+sed -i 's#^root::#root:$1$V4UetPzk$CYXluq4wUazHjmCDBCqXF.:#' /etc/shadow
 
 uci set luci.main.lang=zh_cn
 #设置默认主题
-uci set luci.main.mediaurlbase=/luci-static/bootstrap
+if [ -d /www/luci-static/argon ]; then
+	uci set luci.main.mediaurlbase=/luci-static/argon
+else
+	uci set luci.main.mediaurlbase=/luci-static/bootstrap
+fi
 uci commit luci
 
 uci set system.@system[0].timezone=CST-8
@@ -21,8 +26,6 @@ sed -i '/other/d' /etc/opkg/distfeeds.conf
 #sed -i 's/downloads.openwrt.org/openwrt.proxy.ustclug.org/g' /etc/opkg/distfeeds.conf
 #sed -i 's/http/https/g' /etc/opkg/distfeeds.conf
 sed -i "s/# //g" /etc/opkg/distfeeds.conf
-
-#sed -i 's/root::0:0:99999:7:::/root:$1$V4UetPzk$CYXluq4wUazHjmCDBCqXF.:0:0:99999:7:::/g' /etc/shadow
 
 uci set dhcp.lan.ra='server'
 uci -q del dhcp.lan.dhcpv6
