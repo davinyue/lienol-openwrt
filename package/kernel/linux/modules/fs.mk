@@ -67,7 +67,7 @@ $(eval $(call KernelPackage,fs-autofs4))
 define KernelPackage/fs-btrfs
   SUBMENU:=$(FS_MENU)
   TITLE:=BTRFS filesystem support
-  DEPENDS:=+LINUX_6_12:kmod-lib-crc32c +kmod-lib-lzo +kmod-lib-zlib-inflate +kmod-lib-zlib-deflate +kmod-lib-raid6 +kmod-lib-xor +kmod-lib-zstd +kmod-crypto-blake2b +kmod-crypto-xxhash
+  DEPENDS:=+kmod-lib-crc32c +kmod-lib-lzo +kmod-lib-zlib-inflate +kmod-lib-zlib-deflate +kmod-lib-raid6 +kmod-lib-xor +kmod-lib-zstd +kmod-crypto-blake2b +kmod-crypto-xxhash
   KCONFIG:=\
 	CONFIG_BTRFS_FS \
 	CONFIG_BTRFS_FS_CHECK_INTEGRITY=n
@@ -491,14 +491,15 @@ define KernelPackage/fs-nfs-common-rpcsec
   TITLE:=NFS Secure RPC
   DEPENDS:= \
 	+kmod-fs-nfs-common \
-	+kmod-crypto-des \
-	+kmod-crypto-cbc \
-	+kmod-crypto-cts \
-	+kmod-crypto-md5 \
-	+kmod-crypto-sha1 \
+	+kmod-crypto-manager \
+	+kmod-crypto-authenc \
 	+kmod-crypto-hmac \
-	+kmod-crypto-ecb \
-	+kmod-crypto-arc4
+	+kmod-crypto-cmac \
+	+kmod-crypto-sha1 \
+	+kmod-crypto-sha256 \
+	+kmod-crypto-sha512 \
+	+kmod-crypto-cbc \
+	+kmod-crypto-cts
   KCONFIG:= \
 	CONFIG_SUNRPC_GSS \
 	CONFIG_RPCSEC_GSS_KRB5
@@ -666,7 +667,7 @@ define KernelPackage/fs-xfs
   SUBMENU:=$(FS_MENU)
   TITLE:=XFS filesystem support
   KCONFIG:=CONFIG_XFS_FS
-  DEPENDS:= +kmod-fs-exportfs +LINUX_6_12:kmod-lib-crc32c
+  DEPENDS:= +kmod-fs-exportfs +kmod-lib-crc32c
   FILES:=$(LINUX_DIR)/fs/xfs/xfs.ko
   AUTOLOAD:=$(call AutoLoad,30,xfs,1)
 endef
