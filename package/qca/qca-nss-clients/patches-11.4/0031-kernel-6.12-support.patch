@@ -69,7 +69,7 @@
  /*
   * GRE connection manager context structure
   */
-@@ -186,7 +192,12 @@ static int nss_connmgr_gre_dev_init(stru
+@@ -186,7 +192,17 @@ static int nss_connmgr_gre_dev_init(stru
  	if ((dev->priv_flags_ext & IFF_EXT_GRE_V4_TAP) || (dev->type == ARPHRD_IPGRE)) {
  		dev->needed_headroom = sizeof(struct iphdr) + sizeof(struct ethhdr) + MAX_WIFI_HEADROOM + append;
  		dev->mtu = ETH_DATA_LEN - sizeof(struct iphdr) - append;
@@ -77,19 +77,29 @@
  		dev->features |= NETIF_F_NETNS_LOCAL | NETIF_F_SG | NETIF_F_FRAGLIST | NETIF_F_HIGHDMA;
 +#else
 +		dev->features |= NETIF_F_SG | NETIF_F_FRAGLIST | NETIF_F_HIGHDMA;
-+		dev->netns_local = true;
++		#if LINUX_VERSION_CODE < KERNEL_VERSION(6,12,114) || \
++			(LINUX_VERSION_CODE >= KERNEL_VERSION(6,13,0) && LINUX_VERSION_CODE < KERNEL_VERSION(6,15,0))
++			dev->netns_local = true;
++		#else
++			dev->netns_immutable = true;
++		#endif
 +#endif
  		dev->hw_features |= NETIF_F_SG | NETIF_F_FRAGLIST | NETIF_F_HIGHDMA;
  		return 0;
  	}
-@@ -200,7 +211,11 @@ static int nss_connmgr_gre_dev_init(stru
+@@ -200,7 +211,16 @@ static int nss_connmgr_gre_dev_init(stru
  		dev->mtu = IPV6_MIN_MTU;
  	}
  
 +#if LINUX_VERSION_CODE <= KERNEL_VERSION(6, 10, 0)
  	dev->features |= NETIF_F_NETNS_LOCAL;
 +#else
-+	dev->netns_local = true;
++	#if LINUX_VERSION_CODE < KERNEL_VERSION(6,12,114) || \
++		(LINUX_VERSION_CODE >= KERNEL_VERSION(6,13,0) && LINUX_VERSION_CODE < KERNEL_VERSION(6,15,0))
++		dev->netns_local = true;
++	#else
++		dev->netns_immutable = true;
++	#endif
 +#endif
  	return 0;
  }

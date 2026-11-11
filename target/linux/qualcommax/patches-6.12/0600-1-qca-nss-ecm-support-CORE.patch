@@ -635,7 +635,7 @@
  }
 --- a/net/ipv4/fib_trie.c
 +++ b/net/ipv4/fib_trie.c
-@@ -1196,6 +1196,9 @@ static int fib_insert_alias(struct trie
+@@ -1194,6 +1194,9 @@ static int fib_insert_alias(struct trie
  static void fib_remove_alias(struct trie *t, struct key_vector *tp,
  			     struct key_vector *l, struct fib_alias *old);
  
@@ -645,7 +645,7 @@
  /* Caller must hold RTNL. */
  int fib_table_insert(struct net *net, struct fib_table *tb,
  		     struct fib_config *cfg, struct netlink_ext_ack *extack)
-@@ -1386,6 +1389,9 @@ int fib_table_insert(struct net *net, st
+@@ -1384,6 +1387,9 @@ int fib_table_insert(struct net *net, st
  	rtmsg_fib(RTM_NEWROUTE, htonl(key), new_fa, plen, new_fa->tb_id,
  		  &cfg->fc_nlinfo, nlflags);
  succeeded:
@@ -655,7 +655,7 @@
  	return 0;
  
  out_remove_new_fa:
-@@ -1754,6 +1760,9 @@ int fib_table_delete(struct net *net, st
+@@ -1752,6 +1758,9 @@ int fib_table_delete(struct net *net, st
  	if (READ_ONCE(fa_to_delete->fa_state) & FA_S_ACCESSED)
  		rt_cache_flush(cfg->fc_nlinfo.nl_net);
  
@@ -665,7 +665,7 @@
  	fib_release_info(fa_to_delete->fa_info);
  	alias_free_mem_rcu(fa_to_delete);
  	return 0;
-@@ -2391,6 +2400,20 @@ void __init fib_trie_init(void)
+@@ -2389,6 +2398,20 @@ void __init fib_trie_init(void)
  					   0, SLAB_PANIC | SLAB_ACCOUNT, NULL);
  }
  
@@ -729,7 +729,7 @@
  out:
  	fib6_info_release(rt);
  	return err;
-@@ -6438,6 +6448,20 @@ static int ip6_route_dev_notify(struct n
+@@ -6436,6 +6446,20 @@ static int ip6_route_dev_notify(struct n
  	return NOTIFY_OK;
  }
  
@@ -760,7 +760,7 @@
  	}
  #undef N
  	return "UNKNOWN_NETDEV_EVENT";
-@@ -12220,7 +12221,7 @@ static void __init net_dev_struct_check(
+@@ -12255,7 +12256,7 @@ static void __init net_dev_struct_check(
  #ifdef CONFIG_NET_XGRESS
  	CACHELINE_ASSERT_GROUP_MEMBER(struct net_device, net_device_read_tx, tcx_egress);
  #endif
