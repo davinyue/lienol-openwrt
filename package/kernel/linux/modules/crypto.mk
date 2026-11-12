@@ -566,6 +566,18 @@ endef
 
 $(eval $(call KernelPackage,crypto-kpp))
 
+define KernelPackage/crypto-krb5
+  TITLE:=Kerberos 5 Crypto API support
+  KCONFIG:=CONFIG_CRYPTO_KRB5
+  FILES:= \
+	$(LINUX_DIR)/crypto/krb5/krb5.ko \
+	$(LINUX_DIR)/crypto/krb5enc.ko
+  AUTOLOAD:=$(call AutoLoad,09,krb5enc krb5)
+  $(call AddDepends/crypto)
+endef
+
+$(eval $(call KernelPackage,crypto-krb5))
+
 define KernelPackage/crypto-lib-chacha20
   TITLE:=ChaCha library interface
   KCONFIG:=CONFIG_CRYPTO_LIB_CHACHA
