@@ -1,0 +1,325 @@
+#
+# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+# https://github.com/P3TERX/Actions-OpenWrt
+# Description: Build OpenWrt using GitHub Actions
+#
+
+name: OpenWrt-Plugins-Build-x86
+
+on:
+  push:
+    paths:
+      - 'Makefile'
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      use_cache:
+        description: '使用 OpenWrt 源码/工具链缓存加速编译（默认开启；关闭则全新构建）'
+        required: false
+        default: true
+        type: boolean
+      ssh:
+        description: 'SSH connection to Actions'
+        required: false
+        default: 'false'
+      chosen-os:
+        required: true
+        default: ubuntu-24.04
+        type: choice
+        options:
+          - ubuntu-20.04
+          - ubuntu-22.04
+          - ubuntu-24.04
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  TZ: Asia/Shanghai
+  PLUGIN_NAME: luci-app-pushbot
+  REPO_URL: https://github.com/zzsj0928/luci-app-pushbot.git
+
+jobs:
+  build:
+    if: github.repository == 'zzsj0928/luci-app-pushbot'
+    runs-on: ${{ inputs.chosen-os || 'ubuntu-24.04' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - op_branch: main
+            pkg_type: APK
+          - op_branch: openwrt-23.05
+            pkg_type: IPK
+
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 512
+          swap-size-mb: 1024
+          overprovision-lvm: 'true'
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Initialization environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          CHOSEN_OS: ${{ inputs.chosen-os }}
+        run: |
+          sudo -E apt -qq update -y
+          sudo -E apt -qq install $(curl -fsSL https://raw.githubusercontent.com/zouyq/openwrt-build-action/main/dep/${CHOSEN_OS}) -y
+          sudo -E apt -qq install gettext -y
+          sudo timedatectl set-timezone "$TZ"
+
+      - name: Restore OpenWrt cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: openwrt
+          key: pushbot-${{ matrix.op_branch }}-${{ runner.os }}
+          restore-keys: |
+            pushbot-${{ matrix.op_branch }}-
+
+      - name: Clone source code
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: git clone https://github.com/openwrt/openwrt.git -b ${{ matrix.op_branch }} openwrt
+
+      - name: Update and Install feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Load custom configuration
+        run: |
+          cd openwrt
+          rm -f .config
+          rm -rf package/${{ env.PLUGIN_NAME }}
+          git clone ${{ env.REPO_URL }} package/${{ env.PLUGIN_NAME }}
+          echo CONFIG_TARGET_x86=y >> .config
+          echo CONFIG_TARGET_x86_64=y >> .config
+          echo CONFIG_TARGET_x86_64_DEVICE_generic=y >> .config
+          echo CONFIG_PACKAGE_${{ env.PLUGIN_NAME }}=y >> .config
+          echo CONFIG_PACKAGE_luci-i18n-pushbot-zh-cn=y >> .config
+          echo CONFIG_LUCI_LANG_zh_Hans=y >> .config
+
+      - name: SSH connection to Actions
+        uses: lhotari/action-upterm@v1
+        if: github.event.inputs.ssh == 'true'
+        with:
+          limit-access-to-actor: true
+          wait-timeout-minutes: 5
+
+      - name: Set npm cache to temp
+        run: |
+          mkdir -p /tmp/npm-cache
+          echo "npm_config_cache=/tmp/npm-cache" >> $GITHUB_ENV
+
+      # 签名策略：有 Secret（作者仓库）→ 用固定私钥签名，产物可被设备端
+      # /etc/apk/keys/zed-openwrt-apk.pem 信任、安装免 --allow-untrusted；
+      # 无 Secret（fork）→ 显式关闭逐包签名（SIGN_EACH_PACKAGE 默认 y，
+      # 不关会用自动生成 key 签名）—— 不替 fork 的构建承担签名维护责任。
+      - name: Sign packages with Zed key (only with Secret)
+        run: |
+          if [ -n "${{ secrets.Zed_OpenWRT_APK_PRIVATE_KEY }}" ]; then
+            cat > openwrt/private-key.pem <<'ZEDKEY'
+          ${{ secrets.Zed_OpenWRT_APK_PRIVATE_KEY }}
+          ZEDKEY
+            openssl pkey -in openwrt/private-key.pem -pubout -out openwrt/public-key.pem
+            echo "CONFIG_SIGN_EACH_PACKAGE=y" >> openwrt/.config
+            echo "=== 已配置 Zed 固定私钥签名 ==="
+            head -1 openwrt/private-key.pem
+          else
+            echo "CONFIG_SIGN_EACH_PACKAGE=n" >> openwrt/.config
+            echo "=== 无 Secret（fork 构建），不签名 ==="
+          fi
+      - name: Download and Compile
+        run: |
+          cd openwrt
+          make defconfig
+          make download -j8
+          find dl -size -1024c -exec ls -l {} \;
+          find dl -size -1024c -exec rm -f {} \;
+          echo -e "$(nproc) thread compile"
+          make -j$(nproc) || make -j1 V=s
+
+      - name: Save OpenWrt cache
+        uses: actions/cache/save@v4
+        if: success() && steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: openwrt
+          key: pushbot-${{ matrix.op_branch }}-${{ runner.os }}
+
+      - name: Organize and upload artifacts
+        if: success() && !cancelled()
+        run: |
+          # 收集所有产物（主包 + i18n）
+          mkdir -p pkgs
+          find openwrt/bin/packages -name "luci-app-pushbot*" -exec cp {} pkgs/ \;
+          find openwrt/bin/packages -name "luci-i18n-pushbot*" -exec cp {} pkgs/ \;
+          echo "=== 产物 ==="
+          ls -lh pkgs/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: success() && !cancelled()
+        with:
+          name: pkgs-${{ matrix.pkg_type }}
+          path: pkgs/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: always() && needs.build.result == 'success' && github.repository == 'zzsj0928/luci-app-pushbot'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: pkgs-*
+
+      - name: Collect packages
+        id: collect
+        run: |
+          mkdir -p release-pkgs
+          # 合并所有 artifact 目录中的文件
+          find artifacts -type f \( -name "*.apk" -o -name "*.ipk" \) -exec cp {} release-pkgs/ \;
+          echo "=== 最终产物 ==="
+          ls -lh release-pkgs/
+
+          # 从 Makefile 提取版本号
+          VER=$(grep '^PKG_VERSION' Makefile | head -1 | cut -d= -f2)
+          REL=$(grep '^PKG_RELEASE' Makefile | head -1 | cut -d= -f2)
+          TAG="luci-app-pushbot-v${VER}-r${REL}"
+          echo "VERSION=v${VER}-r${REL}" >> $GITHUB_ENV
+          echo "TAG=${TAG}" >> $GITHUB_ENV
+          echo "=== 版本: ${TAG} ==="
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # 找到上一个同名前缀的 tag
+          PREV_TAG=$(git tag -l "luci-app-pushbot-v*" --sort=-v:refname | head -n1)
+          echo "上一个 tag: ${PREV_TAG:-无}"
+
+          {
+            echo "# ${TAG}"
+            echo ""
+            if [ -n "$PREV_TAG" ]; then
+              echo "## 变更 (${PREV_TAG} → ${TAG})"
+              echo ""
+              # commit subject 列表
+              git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" --no-merges
+              echo ""
+              echo ""
+              # 产物信息
+              echo "## 产物"
+              echo ""
+              echo "| 文件 | 说明 |"
+              echo "|------|------|"
+              find release-pkgs -type f -printf "| %f | |\n" | sort
+            else
+              echo "## 首次发布"
+              echo ""
+              git log --pretty=format:"- %s" --no-merges -20
+              echo ""
+            fi
+          } > release-body.md
+
+          echo "=== release-body.md ==="
+          cat release-body.md
+
+      - name: Create tag and release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 检查 tag 是否已存在
+          if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "tag ${TAG} 已存在，跳过创建（更新产物到已有 Release）"
+          else
+            echo "创建 tag: ${TAG}"
+            git tag "${TAG}"
+            git push origin "${TAG}"
+          fi
+
+          # 创建/更新 Release（idempotent：已存在则更新）
+          gh release delete "${TAG}" --repo "${{ github.repository }}" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "${TAG}" \
+            --repo "${{ github.repository }}" \
+            --title "${TAG}" \
+            --notes-file release-body.md \
+            release-pkgs/*
+
+      - name: Clean old tags (keep 80)
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAGS=$(git tag -l "luci-app-pushbot-v*" --sort=-v:refname)
+          COUNT=$(echo "$TAGS" | grep -c . || echo 0)
+          echo "当前 tag 数: ${COUNT}"
+          if [ "$COUNT" -gt 80 ]; then
+            echo "$TAGS" | tail -n +81 | while read -r t; do
+              echo "删除旧 tag: ${t}"
+              git push --delete origin "${t}" 2>/dev/null || true
+              gh release delete "${t}" --repo "${{ github.repository }}" --yes --cleanup-tag 2>/dev/null || true
+            done
+          fi
+
+      - name: Clean old releases (keep 30)
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release list --repo "${{ github.repository }}" --limit 100 \
+            --json tagName,createdAt --jq '.[] | "\(.createdAt) \(.tagName)"' \
+            | sort -r > /tmp/releases.txt
+          TOTAL=$(wc -l < /tmp/releases.txt)
+          echo "当前 release 数: ${TOTAL}"
+          if [ "$TOTAL" -gt 30 ]; then
+            tail -n +31 /tmp/releases.txt | while read -r line; do
+              TAG=$(echo "$line" | cut -d' ' -f2-)
+              # 不删除刚创建的 tag
+              [ "$TAG" = "${{ env.TAG }}" ] && continue
+              echo "删除旧 release: ${TAG}"
+              gh release delete "${TAG}" --repo "${{ github.repository }}" --yes --cleanup-tag 2>/dev/null || true
+            done
+          fi
+
+      - name: Clean old workflow runs (keep 15)
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="${{ github.repository }}"
+          NOW=$(date +%s)
+          curl -s -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            "https://api.github.com/repos/${REPO}/actions/runs?per_page=100&status=completed" \
+            > /tmp/runs.json
+          SELF="${{ github.run_id }}"
+          jq -r --argjson now "$NOW" --arg self "$SELF" '
+            .workflow_runs | to_entries[] |
+            select(.value.id != ($self|tonumber)) |
+            .key as $i | .value.id as $id |
+            (.value.created_at | fromdateiso8601) as $ct |
+            if (($now - $ct) / 86400 > 180) or ($i >= 15) then "\($id)" else empty end
+          ' /tmp/runs.json | while read -r RID; do
+            echo "删除 run: ${RID}"
+            curl -s -X DELETE -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              "https://api.github.com/repos/${REPO}/actions/runs/${RID}" -o /dev/null
+          done
